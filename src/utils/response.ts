@@ -1,5 +1,11 @@
 import type { Response } from 'express';
 import type { PaginationMeta } from './pagination.js';
+import type { CacheState } from './cache.js';
+
+/** Header only. The JSON body is the same on a hit and a miss. */
+export const setCacheHeader = (res: Response, state: CacheState): void => {
+  res.setHeader('X-Cache', state);
+};
 
 export const sendSuccess = (res: Response, data: unknown, status = 200): void => {
   if (status === 204) {

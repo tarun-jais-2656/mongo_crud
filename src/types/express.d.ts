@@ -7,7 +7,7 @@ declare global {
         userId: Types.ObjectId;
         name: string;
         email: string;
-        sessionId: Types.ObjectId;
+        sessionId?: Types.ObjectId;
         token: string;
       };
     }

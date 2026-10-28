@@ -1,9 +1,7 @@
 import { Router, type Request, type Response } from 'express';
-import { isAppError } from '../../utils/AppError.js';
 import { basicAuth } from '../../middlewares/basicAuth.js';
 import { sendSuccess } from '../../utils/response.js';
 import { authenticate, currentUser } from '../../middlewares/authenticate.js';
-import { loginThrottle } from '../../middlewares/loginRateLimit.js';
 import { loginDto, signupDto } from './auth.dto.js';
 import { AuthService } from './auth.service.js';
 
@@ -25,25 +23,17 @@ export class AuthController {
 
   private login = async (req: Request, res: Response): Promise<void> => {
     const body = loginDto.parse(req.body);
-
-    // Bonus: throttle repeated failures for this IP + email.
-    loginThrottle.assertAllowed(req, body.email);
-
-    try {
-      const { token, expiresAt, user } = await this.authService.login(body, req.get('user-agent') ?? '');
-      loginThrottle.clear(req, body.email);
-      sendSuccess(res, { user, token, expiresAt });
-    } catch (err) {
-      if (isAppError(err) && err.statusCode === 401) {
-        loginThrottle.recordFailure(req, body.email);
-      }
-      throw err;
-    }
+    const { token, expiresAt, user } = await this.authService.login(
+      body,
+      req.get('user-agent') ?? '',
+      req.ip ?? 'unknown',
+    );
+    sendSuccess(res, { user, token, expiresAt });
   };
 
   private logout = async (req: Request, res: Response): Promise<void> => {
-    const { token } = currentUser(req);
-    await this.authService.logout(token);
+    const { userId, token } = currentUser(req);
+    await this.authService.logout(userId.toString(), token);
     sendSuccess(res, { message: 'Logged out' });
   };
 

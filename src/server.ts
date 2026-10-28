@@ -1,6 +1,7 @@
 import app from './app.js';
 import { getEnv, validateConfig } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './providers/database/connection.js';
+import { connectRedis, disconnectRedis } from './providers/redis/connection.js';
 
 const boot = async (): Promise<void> => {
   // 1) Validate environment before doing anything else.
@@ -13,11 +14,18 @@ const boot = async (): Promise<void> => {
 
   const env = getEnv();
 
-  // 2) Connect to MongoDB Atlas.
+  // 2) Connect to MongoDB Atlas, then Redis. The HTTP server starts only after both.
   try {
     await connectDatabase();
   } catch (err) {
     console.error('Failed to connect to MongoDB:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  }
+
+  try {
+    await connectRedis();
+  } catch (err) {
+    console.error('Failed to connect to Redis:', err instanceof Error ? err.message : err);
     process.exit(1);
   }
 
@@ -31,6 +39,7 @@ const boot = async (): Promise<void> => {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n${signal} received, shutting down...`);
     server.close(async () => {
+      await disconnectRedis();
       await disconnectDatabase();
       process.exit(0);
     });

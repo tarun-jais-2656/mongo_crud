@@ -1,7 +1,10 @@
 import type { Request, RequestHandler } from 'express';
+import { Types } from 'mongoose';
+import { redisKeys } from '../constants/redisKeys.js';
 import { unauthorized } from '../utils/AppError.js';
+import { RedisCache } from '../utils/cache.js';
 import { SessionRepository } from '../Repository/session.repository.js';
-import { UserRepository } from '../Repository/user.repository.js';
+import { UserRepository, type UserDocument } from '../Repository/user.repository.js';
 
 export class AuthMiddleware {
   constructor(
@@ -26,13 +29,12 @@ export class AuthMiddleware {
         return;
       }
 
-      const session = await this.sessions.findValidByToken(token);
-      if (!session) {
-        next(unauthorized('Session expired or invalid'));
-        return;
-      }
+      const cachedUserId = await RedisCache.get(redisKeys.session(token));
+      const user =
+        cachedUserId && Types.ObjectId.isValid(cachedUserId)
+          ? await this.users.findById(new Types.ObjectId(cachedUserId))
+          : await this.userFromDatabase(token);
 
-      const user = await this.users.findById(session.userId);
       if (!user) {
         next(unauthorized('Session expired or invalid'));
         return;
@@ -42,7 +44,6 @@ export class AuthMiddleware {
         userId: user._id,
         name: user.name,
         email: user.email,
-        sessionId: session._id,
         token,
       };
       next();
@@ -50,6 +51,20 @@ export class AuthMiddleware {
       next(err);
     }
   };
+
+  /** Cache miss: MongoDB is the source of truth, then the session is copied back to Redis. */
+  private async userFromDatabase(token: string): Promise<UserDocument | null> {
+    const session = await this.sessions.findValidByToken(token);
+    if (!session) return null;
+
+    const user = await this.users.findById(session.userId);
+    if (!user) return null;
+
+    const ttl = Math.floor((session.expiresAt.getTime() - Date.now()) / 1000);
+    await RedisCache.set(redisKeys.session(token), user._id.toString(), ttl);
+    await RedisCache.sadd(redisKeys.userSessions(user._id.toString()), token, ttl);
+    return user;
+  }
 }
 
 export const currentUser = (req: Request): NonNullable<Request['auth']> => {

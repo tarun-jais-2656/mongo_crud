@@ -27,6 +27,7 @@ export const configSchema = z.object({
   LOGIN_WINDOW_MINUTES: optional(z.coerce.number().int().positive().max(1440).default(15)),
   BasicAuth: required('BasicAuth'),
   Password: required('Password'),
+  REDIS_URL: optional(z.string().min(1).default('redis://localhost:6379')),
 });
 
 export type Env = z.infer<typeof configSchema>;

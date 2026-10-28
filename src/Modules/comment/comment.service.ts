@@ -1,5 +1,9 @@
 import { Types } from 'mongoose';
+import { REDIS_TTL } from '../../constants/index.js';
+import { redisKeys } from '../../constants/redisKeys.js';
 import { forbidden, notFound } from '../../utils/AppError.js';
+import { RedisCache, type CacheState } from '../../utils/cache.js';
+import { CacheInvalidation } from '../../utils/cacheInvalidation.js';
 import { Paginator, type PaginationMeta } from '../../utils/pagination.js';
 import { CommentRepository, type CommentDocument } from '../../Repository/comment.repository.js';
 import { PostRepository } from '../../Repository/post.repository.js';
@@ -8,6 +12,7 @@ import type { CommentListQueryDto, CreateCommentDto } from './comment.dto.js';
 export interface OffsetResult {
   data: unknown[];
   pagination: PaginationMeta;
+  cache: CacheState;
 }
 export interface CursorResult {
   data: unknown[];
@@ -32,8 +37,8 @@ export class CommentService {
 
     const comment = await this.comments.create({ postId, userId, userName, text: input.text });
 
-    // Keep the denormalised counter in sync.
     await this.posts.changeCommentCount(postId, 1);
+    await CacheInvalidation.postChanged(postId.toString());
     return comment;
   }
 
@@ -58,12 +63,22 @@ export class CommentService {
       };
     }
 
-    // Default offset mode.
-    return Paginator.paginate(
-      query.page,
-      query.limit,
-      await this.comments.listByPost(postId, query.page, query.limit),
-    );
+    if (query.page === 1) {
+      const version = Number((await RedisCache.get(redisKeys.commentVersion(postId.toString()))) ?? '0') || 0;
+      const key = redisKeys.commentList(postId.toString(), version, query.page, query.limit);
+      const cached = await RedisCache.getJSON<OffsetResult>(key);
+      if (cached) return { ...cached, cache: 'HIT' };
+
+      const page = await this.commentPage(postId, query.page, query.limit);
+      await RedisCache.setJSON(key, page, REDIS_TTL.COMMENTS);
+      return { ...page, cache: 'MISS' };
+    }
+
+    return { ...(await this.commentPage(postId, query.page, query.limit)), cache: 'MISS' };
+  }
+
+  private async commentPage(postId: Types.ObjectId, page: number, limit: number): Promise<Omit<OffsetResult, 'cache'>> {
+    return Paginator.paginate(page, limit, await this.comments.listByPost(postId, page, limit));
   }
 
   async deleteComment(userId: Types.ObjectId, commentId: Types.ObjectId): Promise<void> {
@@ -78,7 +93,7 @@ export class CommentService {
     }
 
     await this.comments.deleteById(commentId);
-    // Only decrement if the post still exists.
     if (post) await this.posts.changeCommentCount(comment.postId, -1);
+    await CacheInvalidation.postChanged(comment.postId.toString());
   }
 }
