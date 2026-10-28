@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { basicAuth } from '../../middlewares/basicAuth.js';
-import { sendSuccess } from '../../utils/response.js';
+import { sendSuccess, setCacheHeader } from '../../utils/response.js';
 import { StatsService } from './stats.service.js';
 
 export class StatsController {
@@ -11,7 +11,9 @@ export class StatsController {
   }
 
   private getStats = async (_req: Request, res: Response): Promise<void> => {
-    sendSuccess(res, await this.statsService.getStats());
+    const { stats, cache } = await this.statsService.getStats();
+    setCacheHeader(res, cache);
+    sendSuccess(res, stats);
   };
 }
 

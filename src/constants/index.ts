@@ -31,3 +31,15 @@ export type PostStatus = (typeof POST_STATUS)[number];
 
 export const POST_SORTS = ['newest', 'oldest', 'mostCommented'] as const;
 export type PostSort = (typeof POST_SORTS)[number];
+
+/** Redis TTLs in seconds. posts:list:version is the only key without a TTL. */
+export const REDIS_TTL = {
+  PROFILE: 60 * 60,
+  POST: 10 * 60,
+  POST_LIST: 60,
+  STATS: 5 * 60,
+  COMMENTS: 60,
+  LOGIN_WINDOW: 15 * 60,
+} as const;
+
+export const LOGIN_MAX_FAILURES = 5;

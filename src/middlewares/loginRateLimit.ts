@@ -1,58 +1,45 @@
-import type { Request } from 'express';
-import { getEnv } from '../config/env.js';
+import { LOGIN_MAX_FAILURES, REDIS_TTL } from '../constants/index.js';
+import { redisKeys } from '../constants/redisKeys.js';
 import { tooManyRequests } from '../utils/AppError.js';
-
-interface Attempt {
-  count: number;
-  firstAt: number;
-}
+import { RedisCache } from '../utils/cache.js';
 
 /**
- * Very small in-memory throttle for failed logins (bonus). Keyed by IP + email
- * so one attacker cannot lock out everyone. A real deployment would use Redis;
- * for this assignment an in-process Map is enough.
+ * Login failures stored in Redis.
+ * login:fail:<email> and login:fail:ip:<ip> are counters with a 15 minute TTL.
+ * If Redis is down, the limit is skipped and login still works.
  */
 export class LoginThrottle {
-  private readonly attempts = new Map<string, Attempt>();
+  async assertAllowed(email: string, ip: string): Promise<void> {
+    const emailCount = await this.count(redisKeys.loginFailEmail(email));
+    const ipCount = await this.count(redisKeys.loginFailIp(ip));
+    const blocked = emailCount >= LOGIN_MAX_FAILURES || ipCount >= LOGIN_MAX_FAILURES;
+    if (!blocked) return;
 
-  private keyFor(req: Request, email: string): string {
-    return `${req.ip ?? 'unknown'}:${email}`;
+    const emailTtl = await RedisCache.ttl(redisKeys.loginFailEmail(email));
+    const ipTtl = await RedisCache.ttl(redisKeys.loginFailIp(ip));
+    const seconds = Math.max(emailTtl, ipTtl, 0);
+    const minutes = Math.max(1, Math.ceil(seconds / 60));
+    throw tooManyRequests(`Too many login attempts. Try again in ${minutes} minutes`);
   }
 
-  private windowMs(): number {
-    return getEnv().LOGIN_WINDOW_MINUTES * 60_000;
+  async recordFailure(email: string, ip: string): Promise<void> {
+    await this.bump(redisKeys.loginFailEmail(email));
+    await this.bump(redisKeys.loginFailIp(ip));
   }
 
-  /** Throws 429 if this IP+email has too many recent failures. */
-  assertAllowed(req: Request, email: string): void {
-    const key = this.keyFor(req, email);
-    const entry = this.attempts.get(key);
-    if (!entry) return;
-
-    // Window elapsed -> forget the old attempts.
-    if (Date.now() - entry.firstAt > this.windowMs()) {
-      this.attempts.delete(key);
-      return;
-    }
-
-    if (entry.count >= getEnv().LOGIN_MAX_ATTEMPTS) {
-      const minutes = getEnv().LOGIN_WINDOW_MINUTES;
-      throw tooManyRequests(`Too many failed login attempts. Try again in up to ${minutes} minutes.`);
-    }
+  async clear(email: string, ip: string): Promise<void> {
+    await RedisCache.delKeys([redisKeys.loginFailEmail(email), redisKeys.loginFailIp(ip)]);
   }
 
-  recordFailure(req: Request, email: string): void {
-    const key = this.keyFor(req, email);
-    const entry = this.attempts.get(key);
-    if (!entry || Date.now() - entry.firstAt > this.windowMs()) {
-      this.attempts.set(key, { count: 1, firstAt: Date.now() });
-      return;
-    }
-    entry.count += 1;
+  private async count(name: string): Promise<number> {
+    const raw = await RedisCache.get(name);
+    const count = raw === null ? 0 : Number(raw);
+    return Number.isFinite(count) ? count : 0;
   }
 
-  clear(req: Request, email: string): void {
-    this.attempts.delete(this.keyFor(req, email));
+  private async bump(name: string): Promise<void> {
+    const count = await RedisCache.incr(name);
+    if (count === 1) await RedisCache.expire(name, REDIS_TTL.LOGIN_WINDOW);
   }
 }
 

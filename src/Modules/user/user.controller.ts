@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticate, currentUser } from '../../middlewares/authenticate.js';
-import { sendPaginated, sendSuccess } from '../../utils/response.js';
+import { sendPaginated, sendSuccess, setCacheHeader } from '../../utils/response.js';
 import { Paginator } from '../../utils/pagination.js';
 import { PostService } from '../post/post.service.js';
 import { updateMeDto } from './user.dto.js';
@@ -21,7 +21,9 @@ export class UserController {
 
   private getMe = async (req: Request, res: Response): Promise<void> => {
     const { userId } = currentUser(req);
-    sendSuccess(res, { user: await this.userService.getProfile(userId) });
+    const { user, cache } = await this.userService.getProfile(userId);
+    setCacheHeader(res, cache);
+    sendSuccess(res, { user });
   };
 
   private updateMe = async (req: Request, res: Response): Promise<void> => {

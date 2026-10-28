@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authenticate, currentUser } from '../../middlewares/authenticate.js';
 import { parseObjectId } from '../../utils/objectId.js';
-import { sendPaginated, sendSuccess } from '../../utils/response.js';
+import { sendPaginated, sendSuccess, setCacheHeader } from '../../utils/response.js';
 import { commentListQueryDto, createCommentDto } from '../comment/comment.dto.js';
 import { CommentService } from '../comment/comment.service.js';
 import { createPostDto, listPostsQueryDto, updatePostDto } from './post.dto.js';
@@ -26,7 +26,8 @@ export class PostController {
 
   private list = async (req: Request, res: Response): Promise<void> => {
     const query = listPostsQueryDto.parse(req.query);
-    const { data, pagination } = await this.postService.listPublished(query);
+    const { data, pagination, cache } = await this.postService.listPublished(query);
+    setCacheHeader(res, cache);
     sendPaginated(res, data, pagination);
   };
 
@@ -39,7 +40,9 @@ export class PostController {
 
   private getOne = async (req: Request, res: Response): Promise<void> => {
     const id = parseObjectId(req.params.id);
-    sendSuccess(res, { post: await this.postService.getPublishedPost(id) });
+    const { post, cache } = await this.postService.getPublishedPost(id);
+    setCacheHeader(res, cache);
+    sendSuccess(res, { post });
   };
 
   private update = async (req: Request, res: Response): Promise<void> => {
@@ -74,6 +77,7 @@ export class PostController {
       sendSuccess(res, { data: result.data, nextCursor: result.nextCursor });
       return;
     }
+    setCacheHeader(res, result.cache);
     sendPaginated(res, result.data, result.pagination);
   };
 }
